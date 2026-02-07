@@ -4,7 +4,7 @@ import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 import globals from 'globals'
 
 /**
- * Root ESLint configuration for the Metra Libs monorepo.
+ * Root ESLint configuration for the ide-a Libs monorepo.
  * All packages inherit these rules via the flat config system.
  *
  * To use in a package, create an eslint.config.js that imports this:

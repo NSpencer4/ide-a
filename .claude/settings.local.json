@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install:*)",
+      "Bash(corepack enable:*)",
+      "Bash(corepack prepare:*)",
+      "Bash(pnpm run build:all:*)",
+      "Bash(pnpm run lint:all:*)",
+      "Bash(corepack pnpm run lint:all:*)"
+    ]
+  }
+}
