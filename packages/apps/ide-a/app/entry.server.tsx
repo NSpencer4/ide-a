@@ -1,11 +1,6 @@
 import { type AppLoadContext, type EntryContext, ServerRouter } from 'react-router'
 import { isbot } from 'isbot'
 import { renderToReadableStream } from 'react-dom/server'
-import { server } from '~/mocks/node'
-
-if (process.env.NODE_ENV === 'development') {
-	server.listen()
-}
 
 export default async function handleRequest(
 	request: Request,

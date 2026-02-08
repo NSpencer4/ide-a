@@ -1,61 +1,67 @@
 {
-	"name": "ide-a",
-	"version": "1.0.0",
-	"description": "Libs for ide-a apps",
-	"type": "module",
-	"repository": "ide-a/ide-a.git",
-	"scripts": {
-		"build:all": "pnpm -r run build",
-		"build:changed": "pnpm -r --filter '...[HEAD~1]' run build",
-		"check-pipeline-readiness": "pnpm run lint:changed && pnpm run test:changed && pnpm run build:changed",
-		"check:pr:readiness": "pnpm run syncpack:fix && pnpm run lint:all:fix && pnpm run test:all && pnpm run build:all",
-		"clean:deps": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
-		"clean:deps:reinstall": "pnpm run clean:deps && pnpm install",
-		"create-package": "node scripts/create-package.js",
-		"lint:all": "pnpm -r run lint",
-		"lint:all:fix": "pnpm -r run lint -- --fix",
-		"lint:changed": "pnpm -r --filter '...[HEAD~1]' run lint",
-		"lint:changed:fix": "pnpm -r --filter '...[HEAD~1]' run lint -- --fix",
-		"prepare": "husky",
-		"release": "multi-semantic-release",
-		"syncpack:fix": "syncpack fix-mismatches && syncpack format",
-		"syncpack:lint": "syncpack lint",
-		"syncpack:list": "syncpack list-mismatches",
-		"test:all": "pnpm -r run test",
-		"test:changed": "pnpm -r --filter '...[HEAD~1]' run test"
-	},
-	"devDependencies": {
-		"@commitlint/cli": "^20.4.0",
-		"@commitlint/config-conventional": "^20.4.0",
-		"@eslint/js": "^9.9.1",
-		"@semantic-release/changelog": "^6.0.3",
-		"@semantic-release/git": "^10.0.1",
-		"@semantic-release/github": "^11.0.1",
-		"@types/node": "^25.0.9",
-		"@typescript-eslint/utils": "^8.53.0",
-		"eslint": "^9.9.1",
-		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-prettier": "^5.5.5",
-		"husky": "^9.1.7",
-		"jest": "^30.2.0",
-		"multi-semantic-release": "^3.0.2",
-		"prettier": "^3.8.0",
-		"syncpack": "^13.0.4",
-		"typescript": "^5.8.2",
-		"typescript-eslint": "^8.3.0"
-	},
-	"author": "",
-	"bugs": "https://github.com/NSpencer4/ide-a/issues",
-	"directories": {
-		"doc": "docs"
-	},
-	"engines": {
-		"node": ">=22"
-	},
-	"homepage": "https://github.com/NSpencer4/ide-a#readme",
-	"packageManager": "pnpm@^9.15.4",
-	"pre-commit": [
-		"pre-commit"
-	],
-	"private": true
+  "name": "ide-a",
+  "version": "1.0.0",
+  "description": "Libs for ide-a apps",
+  "type": "module",
+  "repository": "ide-a/ide-a.git",
+  "scripts": {
+    "dev:all": "pnpm -r run dev",
+    "build:all": "pnpm -r run build",
+    "build:changed": "pnpm -r --filter '...[HEAD~1]' run build",
+    "check-pipeline-readiness": "pnpm run lint:changed && pnpm run test:changed && pnpm run build:changed",
+    "check:pr:readiness": "pnpm run syncpack:fix && pnpm run lint:all:fix && pnpm run test:all && pnpm run build:all",
+    "clean:deps": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
+    "clean:deps:reinstall": "pnpm run clean:deps && pnpm install",
+    "create-package": "node scripts/create-package.js",
+    "lint:all": "pnpm -r run lint",
+    "lint:all:fix": "pnpm -r run lint -- --fix",
+    "lint:changed": "pnpm -r --filter '...[HEAD~1]' run lint",
+    "lint:changed:fix": "pnpm -r --filter '...[HEAD~1]' run lint -- --fix",
+    "prepare": "husky",
+    "release": "multi-semantic-release",
+    "syncpack:fix": "syncpack fix-mismatches && syncpack format",
+    "syncpack:lint": "syncpack lint",
+    "syncpack:list": "syncpack list-mismatches",
+    "test:all": "pnpm -r run test",
+    "test:changed": "pnpm -r --filter '...[HEAD~1]' run test"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.4.0",
+    "@commitlint/config-conventional": "^20.4.0",
+    "@eslint/js": "^9.9.1",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.1",
+    "@types/node": "^25.0.9",
+    "@typescript-eslint/utils": "^8.53.0",
+    "eslint": "^9.9.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "husky": "^9.1.7",
+    "jest": "^30.2.0",
+    "multi-semantic-release": "^3.0.2",
+    "prettier": "^3.8.0",
+    "syncpack": "^13.0.4",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.3.0"
+  },
+  "author": "",
+  "bugs": "https://github.com/NSpencer4/ide-a/issues",
+  "directories": {
+    "doc": "docs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "homepage": "https://github.com/NSpencer4/ide-a#readme",
+  "packageManager": "pnpm@^9.15.4",
+  "pre-commit": [
+    "pre-commit"
+  ],
+  "private": true,
+  "msw": {
+    "workerDirectory": [
+      "packages\\apps\\ide-a\\public"
+    ]
+  }
 }

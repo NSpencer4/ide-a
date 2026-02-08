@@ -1,7 +1,6 @@
-import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 
-const handlers = [
+export const handlers = [
 	http.get('https://api.example.com/user', () => {
 		return HttpResponse.json({
 			id: 'abc-123',
@@ -10,5 +9,3 @@ const handlers = [
 		})
 	}),
 ]
-
-export const server = setupServer(...handlers)
