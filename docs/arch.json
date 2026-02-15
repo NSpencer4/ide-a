@@ -1,0 +1,561 @@
+{
+  "doc": {
+    "title": "Bolt vNext — Cloudflare-Native Architecture Plan",
+    "version": "1.0",
+    "scope": {
+      "included": [
+        "Browser-native runtime via WebContainers",
+        "Persistent project storage",
+        "Real-time collaboration (multi-user editing + presence)",
+        "Workers + Durable Objects coordination",
+        "R2 snapshots/assets",
+        "D1 metadata + pointers",
+        "Schemas and access patterns"
+      ],
+      "excluded": [
+        "AI agent orchestration and filesystem mutation guardrails",
+        "One-click deploy integrations (Netlify/Supabase/etc.)",
+        "Cloud runtime preview (server-side rendering of preview)"
+      ]
+    },
+    "goals": [
+      "Local-first UX with optimistic edits and deterministic convergence",
+      "Sub-100ms perceived interactions for typical edits",
+      "Durable persistence and deterministic recovery",
+      "Scales to ~1M active users with launch spikes",
+      "No D1/R2 calls on realtime hot path"
+    ],
+    "non_goals": [
+      "Perfect global ordering beyond CRDT semantics (CRDT handles convergence)",
+      "Storing file blobs in SQL",
+      "Synchronous persistence acknowledgements for typing"
+    ]
+  },
+  "architecture": {
+    "high_level_flow": [
+      "Browser applies CRDT patch locally (optimistic)",
+      "Browser sends patch to backend over WebSocket",
+      "Worker authenticates/authorizes and routes to Project Durable Object",
+      "Project DO applies patch, sequences, broadcasts to collaborators",
+      "Project DO persists asynchronously (snapshots/patch logs to R2, pointers/metadata to D1)",
+      "On restart, Project DO rehydrates from D1 pointer + R2 snapshot (+ optional patch replay)"
+    ],
+    "components": {
+      "browser": {
+        "name": "Browser Runtime",
+        "tech": [
+          "WebContainers",
+          "CRDT library (e.g., Yjs/Automerge)",
+          "WebSocket client",
+          "Virtual file tree adapter"
+        ],
+        "responsibilities": [
+          "Run full-stack app locally (dev server, bundler, HMR) within WebContainers",
+          "Maintain local CRDT replica and apply local edits instantly",
+          "Derive file contents from CRDT and write them into WebContainer filesystem",
+          "Receive remote patches and merge deterministically",
+          "Trigger preview updates via filesystem watchers/HMR (decoupled from persistence ack)"
+        ],
+        "stores": [
+          {
+            "name": "Local CRDT replica",
+            "type": "in-memory",
+            "durability": "ephemeral",
+            "notes": "Authoritative for local UX; converges via CRDT merges"
+          },
+          {
+            "name": "WebContainer filesystem",
+            "type": "virtual FS",
+            "durability": "ephemeral",
+            "notes": "Derived from CRDT; treated as a render target"
+          }
+        ],
+        "access_patterns": [
+          {
+            "pattern": "Typing/edit",
+            "steps": [
+              "Apply change to local CRDT",
+              "Update derived file in WebContainer FS",
+              "HMR/dev server triggers preview update",
+              "Send patch async over WebSocket"
+            ],
+            "latency_target_ms": 20
+          },
+          {
+            "pattern": "Remote edit",
+            "steps": [
+              "Receive patch via WebSocket",
+              "Merge into CRDT",
+              "Update derived file in WebContainer FS",
+              "Preview updates via HMR"
+            ],
+            "latency_target_ms": 50
+          }
+        ]
+      },
+      "worker": {
+        "name": "Cloudflare Worker (Edge Front Door)",
+        "tech": [
+          "Cloudflare Workers",
+          "WebSockets",
+          "Durable Object stubs",
+          "JWT/session auth (implementation-specific)"
+        ],
+        "responsibilities": [
+          "Authenticate requests (session/JWT)",
+          "Authorize project access (via D1 membership lookup + caching strategy)",
+          "Route WebSocket connections to correct Project DO instance (by project_id)",
+          "Rate limit and protect DO from abuse (per user/project)",
+          "Expose REST endpoints for metadata (create/list projects, invites, etc.)",
+          "Observability injection (request IDs, metrics, logs)"
+        ],
+        "hot_path_rules": [
+          "Worker must not call D1 on every edit; only at connection establishment / session refresh",
+          "WebSocket upgrade should validate auth + membership before attaching to DO"
+        ],
+        "access_patterns": [
+          {
+            "pattern": "WebSocket connect",
+            "steps": [
+              "Validate auth token/cookie",
+              "Check membership/role for project_id (D1 read + cache where safe)",
+              "Open DO stub for project_id",
+              "Upgrade and attach WebSocket to DO"
+            ],
+            "latency_target_ms": 100
+          },
+          {
+            "pattern": "Metadata API",
+            "steps": [
+              "Handle REST request",
+              "Read/write D1 metadata",
+              "Return response (no DO involvement unless needed)"
+            ],
+            "latency_target_ms": 200
+          }
+        ]
+      },
+      "durable_object": {
+        "name": "Project Durable Object",
+        "identity_key": "project_id",
+        "tech": [
+          "Cloudflare Durable Objects",
+          "WebSockets",
+          "DO alarm() scheduling",
+          "R2 binding",
+          "D1 binding"
+        ],
+        "responsibilities": [
+          "Single authority per project for sequencing + broadcasting patches",
+          "Hold active CRDT document state in memory (authoritative for session)",
+          "Maintain presence and session metadata",
+          "Persist snapshots/patch logs to R2 asynchronously",
+          "Maintain durable pointers/metadata updates in D1",
+          "Rehydrate from storage on cold start (D1 pointer -> R2 snapshot -> optional patch replay)"
+        ],
+        "in_memory_state": {
+          "crdt_state": "CRDT document instance or serialized state in memory",
+          "presence": "Map<connectionId, {userId, cursor, selection, lastSeen}>",
+          "seq": "Monotonic sequence for patches broadcast ordering (within DO)",
+          "last_snapshot": "timestamp ms",
+          "dirty": "boolean or patch counter since last snapshot",
+          "connections": "Set of active WebSocket connections"
+        },
+        "hot_path": {
+          "description": "Apply patch + broadcast",
+          "rules": [
+            "No D1 or R2 operations on patch apply",
+            "Broadcast immediately after apply",
+            "Persist asynchronously via alarm or microtask queue"
+          ],
+          "steps": [
+            "Validate patch shape and size limits",
+            "Apply patch to in-memory CRDT",
+            "Increment seq",
+            "Broadcast patch to all peers (including metadata: seq, actor)",
+            "Mark dirty/patch_count++",
+            "Schedule persistence (alarm or queued job)"
+          ],
+          "latency_target_ms": 20
+        },
+        "persistence_path": {
+          "snapshot_strategy": {
+            "triggers": [
+              "Every N patches (e.g., 500-2000 depending on snapshot size)",
+              "Every T seconds (e.g., 15-60s) while active",
+              "When last client disconnects (flush snapshot)"
+            ],
+            "ordering_invariant": "Write R2 first, then D1 pointer second (avoid dangling pointers)"
+          },
+          "steps": [
+            "Serialize CRDT to snapshot blob",
+            "Compute versionId (e.g., UUIDv7 or timestamp+random)",
+            "R2.put(snapshotKey, blob, metadata)",
+            "D1: insert project_snapshots row (append-only history)",
+            "D1: update project_state.latest_snapshot_id + last_snapshot_at + updated_at"
+          ],
+          "async_rules": [
+            "Never block patch apply",
+            "Retry D1 pointer updates idempotently if R2 write succeeded",
+            "Handle orphaned blobs via periodic compaction/reconciliation"
+          ]
+        },
+        "recovery_path": {
+          "steps": [
+            "Read project_state for project_id to get latest_snapshot_id",
+            "Join to project_snapshots to obtain r2_key",
+            "Fetch snapshot blob from R2",
+            "Deserialize CRDT state into memory",
+            "Optionally replay patch log if using patch log strategy",
+            "Accept connections and resume realtime"
+          ],
+          "latency_target_ms": 200
+        }
+      },
+      "r2": {
+        "name": "Cloudflare R2",
+        "role": "Immutable object storage for large blobs",
+        "stores": [
+          {
+            "name": "Snapshots",
+            "description": "Serialized CRDT document snapshots (immutable)",
+            "mutability": "immutable",
+            "read_pattern": "DO rehydration on cold start; historical restore",
+            "write_pattern": "Async from DO on snapshot triggers"
+          },
+          {
+            "name": "Patch logs (optional)",
+            "description": "Append-only patches between snapshots to reduce snapshot frequency",
+            "mutability": "immutable chunks (append by new objects)",
+            "read_pattern": "Replay on recovery",
+            "write_pattern": "Async from DO (batch write every K patches)"
+          },
+          {
+            "name": "Binary assets",
+            "description": "User-uploaded images/icons/binaries; referenced in project",
+            "mutability": "immutable by content hash",
+            "read_pattern": "Served directly via signed/public URLs",
+            "write_pattern": "Uploaded via Worker with auth, stored by hash"
+          }
+        ],
+        "object_layout": {
+          "prefixes": [
+            "projects/{projectId}/snapshots/{versionId}.bin",
+            "projects/{projectId}/patches/{fromSeq}-{toSeq}.bin",
+            "projects/{projectId}/assets/{sha256}",
+            "projects/{projectId}/exports/{exportId}.tar.gz"
+          ],
+          "metadata_headers": [
+            "projectId",
+            "versionId",
+            "createdAt",
+            "patchCount",
+            "contentType",
+            "codecVersion"
+          ]
+        },
+        "notes": [
+          "R2 never writes to D1 directly; the DO coordinates both",
+          "Prefer content-addressed assets for dedupe (assets/{sha256})",
+          "Snapshots are immutable; update pointers in D1 instead of overwriting blobs"
+        ]
+      },
+      "d1": {
+        "name": "Cloudflare D1",
+        "role": "Relational metadata and pointers",
+        "stores": [
+          "Users",
+          "Projects",
+          "Membership/roles",
+          "Snapshot pointers + history",
+          "Audit events",
+          "Project settings"
+        ],
+        "hot_path_rules": [
+          "No per-keystroke reads/writes",
+          "Reads primarily during WebSocket connect/auth + DO recovery",
+          "Writes primarily during async snapshot pointer updates + metadata mutations"
+        ]
+      }
+    }
+  },
+  "data_stores": {
+    "what_goes_where": {
+      "durable_object_memory": [
+        "Active CRDT state for currently active projects",
+        "Presence + session metadata",
+        "Temporary sequencing counters",
+        "Short-lived locks"
+      ],
+      "r2": [
+        "CRDT snapshots (immutable)",
+        "Optional patch log chunks (immutable)",
+        "Binary assets (content-addressed)",
+        "Exports (optional)"
+      ],
+      "d1": [
+        "Users",
+        "Projects",
+        "Permissions (membership roles)",
+        "Pointers to latest snapshot and patch offsets",
+        "Snapshot history rows",
+        "Audit events",
+        "Project settings"
+      ],
+      "browser": [
+        "Local CRDT replica",
+        "Derived filesystem in WebContainers",
+        "Preview runtime state"
+      ]
+    }
+  },
+  "access_patterns": {
+    "realtime_edit": {
+      "path": "Browser -> WebSocket -> Worker -> Project DO -> broadcast -> Browsers",
+      "d1_involved": false,
+      "r2_involved": false,
+      "notes": [
+        "Local preview update happens before network send (optimistic)",
+        "DO sequencing used only for broadcast ordering; CRDT ensures convergence"
+      ]
+    },
+    "connect_and_join": {
+      "path": "Browser -> Worker (auth + membership) -> DO (attach WS)",
+      "d1_reads": [
+        "project_members by (project_id, user_id) OR project visibility rules"
+      ],
+      "notes": [
+        "Membership can be cached short-term at Worker, but must be revalidated periodically for revocations"
+      ]
+    },
+    "snapshot_persist": {
+      "path": "DO -> R2.put(snapshot) -> D1.insert(snapshot row) -> D1.update(pointer)",
+      "write_order_invariant": "R2 then D1",
+      "retry_strategy": [
+        "If D1 fails after R2 success, retry pointer update idempotently",
+        "Maintain reconciliation job/logic to find orphan blobs if necessary"
+      ]
+    },
+    "durable_object_recovery": {
+      "path": "DO -> D1 read pointer -> R2.get(snapshot) -> rehydrate -> serve",
+      "queries": [
+        "project_state + join to project_snapshots for r2_key"
+      ]
+    },
+    "project_metadata_change": {
+      "path": "Browser -> Worker REST -> D1 write -> return",
+      "examples": [
+        "rename project",
+        "change visibility",
+        "add/remove member"
+      ]
+    },
+    "asset_upload": {
+      "path": "Browser -> Worker (signed upload or proxied) -> R2.put(asset by hash) -> D1 optional reference row",
+      "notes": [
+        "Prefer direct-to-R2 signed uploads for large files; Worker issues signed URL after auth"
+      ]
+    }
+  },
+  "schemas": {
+    "d1_sql": {
+      "tables": [
+        {
+          "name": "users",
+          "ddl": "CREATE TABLE users (\n  id TEXT PRIMARY KEY,\n  email TEXT UNIQUE NOT NULL,\n  name TEXT,\n  avatar_url TEXT,\n  created_at INTEGER NOT NULL,\n  updated_at INTEGER NOT NULL\n);\nCREATE INDEX idx_users_email ON users(email);"
+        },
+        {
+          "name": "projects",
+          "ddl": "CREATE TABLE projects (\n  id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL,\n  name TEXT NOT NULL,\n  description TEXT,\n  visibility TEXT NOT NULL, -- 'private'|'public'\n  created_at INTEGER NOT NULL,\n  updated_at INTEGER NOT NULL,\n  FOREIGN KEY (owner_id) REFERENCES users(id)\n);\nCREATE INDEX idx_projects_owner ON projects(owner_id);"
+        },
+        {
+          "name": "project_members",
+          "ddl": "CREATE TABLE project_members (\n  project_id TEXT NOT NULL,\n  user_id TEXT NOT NULL,\n  role TEXT NOT NULL, -- 'owner'|'editor'|'viewer'\n  created_at INTEGER NOT NULL,\n  PRIMARY KEY (project_id, user_id),\n  FOREIGN KEY (project_id) REFERENCES projects(id),\n  FOREIGN KEY (user_id) REFERENCES users(id)\n);\nCREATE INDEX idx_project_members_user ON project_members(user_id);"
+        },
+        {
+          "name": "project_snapshots",
+          "ddl": "CREATE TABLE project_snapshots (\n  id TEXT PRIMARY KEY, -- versionId\n  project_id TEXT NOT NULL,\n  r2_key TEXT NOT NULL,\n  patch_count INTEGER NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  created_at INTEGER NOT NULL,\n  created_by TEXT, -- user_id or 'system'\n  FOREIGN KEY (project_id) REFERENCES projects(id)\n);\nCREATE INDEX idx_snapshots_project_time ON project_snapshots(project_id, created_at DESC);"
+        },
+        {
+          "name": "project_state",
+          "ddl": "CREATE TABLE project_state (\n  project_id TEXT PRIMARY KEY,\n  latest_snapshot_id TEXT,\n  latest_patch_offset INTEGER NOT NULL DEFAULT 0,\n  last_snapshot_at INTEGER,\n  updated_at INTEGER NOT NULL,\n  FOREIGN KEY (project_id) REFERENCES projects(id)\n);"
+        },
+        {
+          "name": "project_settings",
+          "ddl": "CREATE TABLE project_settings (\n  project_id TEXT PRIMARY KEY,\n  runtime_mode TEXT NOT NULL DEFAULT 'browser', -- 'browser'|'cloud'\n  auto_snapshot_patch_threshold INTEGER NOT NULL DEFAULT 1000,\n  auto_snapshot_interval_ms INTEGER NOT NULL DEFAULT 30000,\n  max_asset_bytes INTEGER NOT NULL DEFAULT 52428800,\n  updated_at INTEGER NOT NULL,\n  FOREIGN KEY (project_id) REFERENCES projects(id)\n);"
+        },
+        {
+          "name": "audit_events",
+          "ddl": "CREATE TABLE audit_events (\n  id TEXT PRIMARY KEY,\n  project_id TEXT NOT NULL,\n  actor_id TEXT,\n  event_type TEXT NOT NULL,\n  metadata TEXT, -- small JSON only\n  created_at INTEGER NOT NULL,\n  FOREIGN KEY (project_id) REFERENCES projects(id)\n);\nCREATE INDEX idx_audit_project_time ON audit_events(project_id, created_at DESC);"
+        }
+      ],
+      "hot_queries": [
+        {
+          "name": "Permission check on connect",
+          "sql": "SELECT role FROM project_members WHERE project_id = ? AND user_id = ?;"
+        },
+        {
+          "name": "DO recovery pointer lookup (preferred)",
+          "sql": "SELECT ps.latest_snapshot_id, s.r2_key\nFROM project_state ps\nLEFT JOIN project_snapshots s ON s.id = ps.latest_snapshot_id\nWHERE ps.project_id = ?;"
+        },
+        {
+          "name": "List projects for user",
+          "sql": "SELECT p.*\nFROM projects p\nJOIN project_members pm ON pm.project_id = p.id\nWHERE pm.user_id = ?\nORDER BY p.updated_at DESC\nLIMIT ? OFFSET ?;"
+        }
+      ]
+    },
+    "r2_objects": {
+      "snapshot_blob_contract": {
+        "encoding": "binary (preferred) or json (v1 ok, binary later)",
+        "fields": {
+          "projectId": "string",
+          "versionId": "string",
+          "createdAt": "number (epoch ms)",
+          "codecVersion": "number",
+          "patchCount": "number",
+          "crdtState": "opaque serialized CRDT state",
+          "optionalFileIndex": "map of path -> {hash,size,mtime}"
+        },
+        "notes": [
+          "Keep snapshot self-contained to allow deterministic recovery",
+          "Prefer compression (zstd/gzip) as blob sizes grow"
+        ]
+      },
+      "patch_log_contract_optional": {
+        "encoding": "binary or json",
+        "chunking": "store patches in bounded chunks (e.g., 100-1000 patches per object)",
+        "fields": {
+          "projectId": "string",
+          "fromSeq": "number",
+          "toSeq": "number",
+          "createdAt": "number",
+          "patches": "list of CRDT updates (opaque)"
+        }
+      },
+      "key_naming": {
+        "snapshots": "projects/{projectId}/snapshots/{versionId}.bin",
+        "patches": "projects/{projectId}/patches/{fromSeq}-{toSeq}.bin",
+        "assets": "projects/{projectId}/assets/{sha256}",
+        "exports": "projects/{projectId}/exports/{exportId}.tar.gz"
+      }
+    }
+  },
+  "operational": {
+    "snapshot_policy_defaults": {
+      "patch_threshold": 1000,
+      "interval_ms": 30000,
+      "flush_on_last_disconnect": true,
+      "retention": {
+        "keep_last_n": 50,
+        "keep_daily_days": 14,
+        "keep_weekly_weeks": 8
+      }
+    },
+    "limits_and_quotas": {
+      "max_patch_bytes": 65536,
+      "max_message_bytes": 1048576,
+      "max_asset_bytes_default": 52428800,
+      "max_concurrent_connections_per_project": 200,
+      "max_projects_per_user_soft": 1000
+    },
+    "observability": {
+      "metrics": [
+        "ws_connections_active",
+        "patch_apply_latency_ms",
+        "broadcast_fanout_count",
+        "snapshot_write_latency_ms",
+        "snapshot_failure_count",
+        "rehydration_latency_ms",
+        "d1_query_latency_ms",
+        "r2_get_put_latency_ms"
+      ],
+      "logs": [
+        "connection lifecycle (connect/disconnect/authz)",
+        "snapshot start/finish/failure with versionId",
+        "recovery events with snapshot pointer",
+        "rate limit denials"
+      ],
+      "tracing": [
+        "propagate request_id from Worker to DO",
+        "attach project_id + user_id (hashed) for correlation"
+      ]
+    },
+    "failure_modes_and_handling": [
+      {
+        "failure": "DO crashes mid-session",
+        "handling": [
+          "Clients reconnect to Worker",
+          "Worker routes to DO (may be new instance)",
+          "DO rehydrates from latest snapshot pointer",
+          "Clients resync via CRDT (send state vector / request missing updates)"
+        ]
+      },
+      {
+        "failure": "R2 write succeeds but D1 update fails",
+        "handling": [
+          "DO retries D1 insert/update idempotently",
+          "If still failing, keep latest versionId in memory and retry on next alarm",
+          "Optional reconciliation job scans recent R2 objects vs D1 rows"
+        ]
+      },
+      {
+        "failure": "D1 temporarily unavailable",
+        "handling": [
+          "Allow realtime editing to continue (hot path unaffected)",
+          "Defer snapshot pointer update until D1 recovers",
+          "Bound in-memory pending pointer updates to avoid unbounded growth"
+        ]
+      }
+    ]
+  },
+  "security": {
+    "access_control": {
+      "rules": [
+        "All WebSocket upgrades must pass through Worker for authz",
+        "DO does not accept unauthenticated inbound traffic except via Worker",
+        "Membership is enforced on connect and periodically revalidated (revocation window)",
+        "Role controls (viewer/editor/owner) enforced for patch submission"
+      ],
+      "recommended_checks": [
+        "Project visibility (public vs private)",
+        "Member role lookup (project_members)",
+        "Rate limit by user_id + project_id"
+      ]
+    },
+    "data_protection": {
+      "notes": [
+        "Avoid storing secrets in project snapshots; handle environment variables separately (future)",
+        "Assets stored in R2 should use signed URLs for private projects",
+        "Audit logs store only small JSON metadata"
+      ]
+    }
+  },
+  "implementation_notes": {
+    "crdt_selection": {
+      "recommendation": "CRDT-based collaboration (Yjs or Automerge)",
+      "reason": [
+        "Local-first optimistic updates",
+        "No server-ack ordering required for typing",
+        "Deterministic convergence under concurrent edits"
+      ]
+    },
+    "preview_rendering": {
+      "model": "Decoupled local rendering",
+      "description": [
+        "Preview re-renders on local CRDT -> FS changes",
+        "Network send and persistence are asynchronous",
+        "Remote patches merge and trigger FS updates and HMR"
+      ]
+    },
+    "websocket_protocol": {
+      "message_types": [
+        "hello (client->server) includes project_id, client_id, auth context",
+        "presence (bi-directional) cursor/selection updates",
+        "patch (bi-directional) CRDT updates",
+        "sync (client<->server) state vector exchange",
+        "error (server->client) permission/rate/size errors"
+      ],
+      "ordering": "DO assigns seq for broadcast ordering; CRDT ensures convergence regardless"
+    }
+  }
+}

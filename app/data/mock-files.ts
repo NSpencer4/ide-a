@@ -10,10 +10,10 @@ export const mockFileTree: FileTreeEntry[] = [
     {name: "App.tsx", path: "src/App.tsx", type: "file", depth: 1},
     {name: "index.css", path: "src/index.css", type: "file", depth: 1},
     {name: "main.tsx", path: "src/main.tsx", type: "file", depth: 1},
-    {name: "public", path: "public", type: "folder", depth: 0},
-    {name: "index.html", path: "public/index.html", type: "file", depth: 1},
+    {name: "index.html", path: "index.html", type: "file", depth: 0},
     {name: "package.json", path: "package.json", type: "file", depth: 0},
     {name: "tsconfig.json", path: "tsconfig.json", type: "file", depth: 0},
+    {name: "vite.config.ts", path: "vite.config.ts", type: "file", depth: 0},
 ];
 
 export const mockFileContents: Record<string, string> = {
@@ -69,7 +69,7 @@ import "./index.css";
 
 createRoot(document.getElementById("root")!).render(<App />);
 `,
-    "public/index.html": `<!DOCTYPE html>
+    "index.html": `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
@@ -114,5 +114,12 @@ createRoot(document.getElementById("root")!).render(<App />);
     },
     "include": ["src"]
 }
+`,
+    "vite.config.ts": `import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+    plugins: [react()],
+});
 `,
 };
