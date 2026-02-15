@@ -1,7 +1,5 @@
-import { Welcome } from "../welcome/welcome";
+import {IDELayout} from "../components/ide/ide-layout";
 
 export default function Home() {
-    const message = "Hello from RSC on Cloudflare Workers";
-
-    return <Welcome message={message}/>;
+    return <IDELayout/>;
 }
