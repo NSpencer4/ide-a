@@ -8,6 +8,9 @@
     "workers/**/*",
     "worker-configuration.d.ts"
   ],
+  "exclude": [
+    "workers/app.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "strict": true,

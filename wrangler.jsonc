@@ -6,7 +6,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "ide-a",
 	"compatibility_date": "2025-05-05",
-	"main": "@react-router/dev/config/default-rsc-entries/entry.rsc",
+	"main": "workers/app.ts",
 	"vars": {
 		"VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
 	},
@@ -15,6 +15,22 @@
 	},
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "PROJECT_DO",
+				"class_name": "ProjectDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"ProjectDO"
+			]
+		}
 	]
 	/**
 	 * Smart Placement
