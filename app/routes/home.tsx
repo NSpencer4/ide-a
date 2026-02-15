@@ -2,7 +2,7 @@ import {IDELayout} from "../components/ide/ide-layout";
 import {mockFileContents} from "../data/mock-files";
 import type {Route} from "./+types/home";
 
-const PROJECT_ID = "default-project";
+const PROJECT_ID = "ide-a";
 
 export async function loader({context}: Route.LoaderArgs) {
     const cf = context.cloudflare as { env: Env } | undefined;

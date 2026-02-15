@@ -5,14 +5,22 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
-export default defineConfig({
-  server: {
-    headers: {
-      "Cross-Origin-Embedder-Policy": "require-corp",
-      "Cross-Origin-Opener-Policy": "same-origin",
+function crossOriginIsolation(): import("vite").Plugin {
+  return {
+    name: "cross-origin-isolation",
+    configureServer(server) {
+      server.middlewares.use((_req, res, next) => {
+        res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+        res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+        next();
+      });
     },
-  },
+  };
+}
+
+export default defineConfig({
   plugins: [
+    crossOriginIsolation(),
     cloudflare({
       viteEnvironment: {
         name: "rsc",

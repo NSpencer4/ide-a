@@ -25,7 +25,7 @@ export function IDELayout({initialFiles, projectId}: IDELayoutProps) {
         previewUrl,
         error: wcError,
         writeFile: wcWriteFile,
-    } = useWebContainer(initialFiles);
+    } = useWebContainer(files);
 
     const saveFile = useCallback(
         async (path: string, content: string) => {
