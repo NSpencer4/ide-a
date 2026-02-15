@@ -5,13 +5,13 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "ide-a",
-	"compatibility_date": "2025-04-04",
-	"main": "./workers/app.ts",
+	"compatibility_date": "2025-05-05",
+	"main": "@react-router/dev/config/default-rsc-entries/entry.rsc",
 	"vars": {
 		"VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
 	},
 	"observability": {
-		"enabled": true
+		"enabled": false
 	},
 	"compatibility_flags": [
 		"nodejs_compat"
